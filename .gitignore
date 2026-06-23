@@ -11,3 +11,6 @@ auth.json
 node_modules/
 *.log
 .DS_Store
+
+# server-side chat history (opt-in)
+server/history/

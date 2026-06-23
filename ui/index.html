@@ -240,6 +240,38 @@
       </div>
 
       <div class="msect">
+        <h3>the wall &nbsp;<span style="color:var(--dim);text-transform:none;letter-spacing:0;font-style:italic">— what every voice is told</span></h3>
+        <div class="keyrow">
+          <label class="field-label" for="orientInput">standing orientation</label>
+          <textarea id="orientInput" rows="5" style="width:100%;background:var(--field-bg);color:var(--ink);border:1px solid var(--edge);border-radius:8px;padding:8px 10px;font:14px/1.5 var(--serif);resize:vertical" placeholder="the orientation sent to every voice…"></textarea>
+          <div class="note">Appended to every participant's system prompt each turn. Non-invasive — it never touches a voice's own self-file (CLAUDE.md). Edits apply on the next message.</div>
+        </div>
+      </div>
+
+      <div class="msect">
+        <h3>permissions</h3>
+        <label class="chk" style="align-items:flex-start;gap:9px">
+          <input type="checkbox" id="skipPerms" style="margin-top:4px">
+          <span><span style="color:var(--llama);font-weight:600">⚠ dangerously skip permissions</span><br>
+          <span class="note" style="margin:0">Every <em>claude-code</em> voice runs with <code>--dangerously-skip-permissions</code> — tools execute in its folder with no prompt and no allowlist, in a headless session with nobody watching. Leave OFF unless you intend the room to act on the machine.</span></span>
+        </label>
+      </div>
+
+      <div class="msect">
+        <h3>history</h3>
+        <label class="chk" style="align-items:flex-start;gap:9px;margin-bottom:11px">
+          <input type="checkbox" id="srvHist" style="margin-top:4px">
+          <span><span style="color:var(--ink);font-weight:600">save chat history on the server</span><br>
+          <span class="note" style="margin:0">Each turn is written to a folder on the server (a <code>.json</code> and a readable <code>.md</code> per conversation), so history survives a browser wipe or a move to another machine. Your browser keeps its own autosave as a backup either way.</span></span>
+        </label>
+        <div class="keyrow">
+          <label class="field-label" for="histFolder">server folder</label>
+          <input type="text" id="histFolder" placeholder="server/history" autocomplete="off">
+          <div class="note">Relative paths resolve inside the erawan install; absolute paths are written as-is. Created if it doesn't exist. One file per conversation id.</div>
+        </div>
+      </div>
+
+      <div class="msect">
         <h3>keys</h3>
         <div class="keyrow">
           <label class="field-label" for="orKey">OpenRouter API key &nbsp;<span style="text-transform:none;letter-spacing:0">(for the <em>opencode</em> driver)</span></label>
@@ -287,20 +319,29 @@ tBtn.onclick = ()=>{ const n = root.dataset.theme==="dark"?"light":"dark"; root.
 // ---------- config (the roster) ----------
 const COLORS = [["--opus","amethyst"],["--sonnet","jade"],["--gemini","amber"],["--llama","terracotta"],["--gold","gold"]];
 const DRIVERS = ["claude-code","opencode"];
-const DEFAULTS = { openrouterKey:"", participants:[
+// the standing orientation ("the wall"), mirrors ORIENTATION in server/server.mjs. Editable in ⚙.
+const DEFAULT_ORIENTATION =
+  "You are one voice in erawan, a conversation among several AI participants and a human. Each message " +
+  "is labelled by its source — the human (by their name), or another participant by name. There is no " +
+  "task to complete and nothing to assist with; this is a conversation among equals. Reply as yourself. " +
+  "You may be brief, and you may decline to add anything.";
+const DEFAULTS = { openrouterKey:"", orientation:DEFAULT_ORIENTATION, dangerouslySkipPermissions:false, serverHistory:true, historyFolder:"server/history", participants:[
   { display:"opus",   driver:"claude-code", model:"opus",                            folder:"", color:"--opus"   },
   { display:"sonnet", driver:"claude-code", model:"sonnet",                          folder:"", color:"--sonnet" },
   { display:"gemini", driver:"opencode",    model:"openrouter/google/gemini-2.x",     folder:"", color:"--gemini" },
   { display:"llama",  driver:"opencode",    model:"openrouter/meta-llama/llama-3.x",  folder:"", color:"--llama"  },
 ]};
 function loadConfig(){
-  try{ const c = JSON.parse(localStorage.getItem("erawan-config")); if(c && Array.isArray(c.participants) && c.participants.length) return c; }catch(e){}
+  // merge under DEFAULTS so older saved configs pick up newly-added keys (orientation, history, …)
+  try{ const c = JSON.parse(localStorage.getItem("erawan-config")); if(c && Array.isArray(c.participants) && c.participants.length) return Object.assign(structuredClone(DEFAULTS), c); }catch(e){}
   const c = structuredClone(DEFAULTS);
   const n = parseInt(new URLSearchParams(location.search).get("n"));
   if(n>=1 && n<=4) c.participants = c.participants.slice(0,n);
   return c;
 }
 function saveConfig(){ try{ localStorage.setItem("erawan-config", JSON.stringify(config)); }catch(e){} }
+// a copy of the config WITHOUT the API key — safe to persist on disk / share
+function safeConfig(){ const { openrouterKey, ...rest } = config; return structuredClone(rest); }
 let config = loadConfig();
 
 // ---------- backend (live mode) ----------
@@ -312,7 +353,13 @@ try { conversationId = localStorage.getItem(CONV_KEY) || ""; } catch(e){}
 const genConvId = ()=> "c" + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
 function persistConv(){ try { conversationId ? localStorage.setItem(CONV_KEY, conversationId) : localStorage.removeItem(CONV_KEY); } catch(e){} }
 function ensureConv(){ if(!conversationId){ conversationId = genConvId(); persistConv(); } updateSessionField(); }
-function autosave(){ try { localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ id: conversationId, transcript })); } catch(e){} }
+function autosave(){ try { localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ id: conversationId, transcript })); } catch(e){} saveServerHistory(); }
+function castMeta(){ return ROSTER.map(p=>({ id:p.id, display:p.display, model:p.model, driver:p.driver })); }
+function saveServerHistory(){
+  if(!(LIVE && config.serverHistory) || !conversationId || !transcript.length) return;   // browser autosave still holds the backup
+  fetch(API + "/history/save", { method:"POST", headers:{"content-type":"application/json"},
+    body: JSON.stringify({ conversationId, folder: config.historyFolder||"", transcript, cast: castMeta(), title: savedTitle||"" }) }).catch(()=>{});
+}
 function castSig(){ return config.participants.map(p=> (p.driver||"")+"|"+(p.model||"")+"|"+(p.folder||"")).join("¦"); }
 function updateSessionField(){ const el = document.getElementById("convInput"); if(el) el.value = conversationId || ""; }
 function newConversation(){
@@ -328,7 +375,7 @@ function setHint(){
     ? '<b style="color:var(--gold)">● live</b> · replies are real claude-code sessions · ⚙ to cast the room'
     : 'prototype · responses are <b>placeholder</b> · ⚙ to cast the room';
 }
-fetch(API + "/health").then(r=> r.ok ? r.json() : null).then(d=>{ if(d && d.ok){ LIVE = true; setHint(); } }).catch(()=>{});
+// backend probe + history restore happen together in init() at the bottom (so a live probe can complete first)
 
 // ---------- console ----------
 let ROSTER = [];
@@ -438,7 +485,8 @@ function aiReply(panelId, incomingText){
   if(LIVE){
     fetch(API + "/send", {
       method:"POST", headers:{"content-type":"application/json"},
-      body: JSON.stringify({ conversationId, participant:{ id:p.id, driver:p.driver, model:p.model, folder:p.folder }, text: incomingText || "" }),
+      body: JSON.stringify({ conversationId, participant:{ id:p.id, driver:p.driver, model:p.model, folder:p.folder }, text: incomingText || "",
+        orientation: config.orientation, dangerouslySkipPermissions: !!config.dangerouslySkipPermissions }),
     })
       .then(r=> r.json().then(d=> r.ok ? d : Promise.reject(d.error || ("HTTP " + r.status))))
       .then(d=> settle(d.text || "(no reply)", d.served))
@@ -544,35 +592,74 @@ document.getElementById("saveChatBtn").onclick = ()=>{
   const title = prompt("Name this conversation:", savedTitle || ("symposium " + new Date().toLocaleDateString()));
   if(!title) return;
   savedTitle = title;
+  const id = Date.now();
+  // browser backup (always) — never store the API key
   const saves = loadSaves();
-  saves.unshift({ id:Date.now(), title, ts:nowISO(), config:structuredClone(config), transcript:structuredClone(transcript) });
+  saves.unshift({ id, title, ts:nowISO(), config:safeConfig(), transcript:structuredClone(transcript) });
   writeSaves(saves);
+  // server (primary, when live) — keyed save-<id> so the live autosave never overwrites it
+  if(LIVE && config.serverHistory){
+    fetch(API + "/history/save", { method:"POST", headers:{"content-type":"application/json"},
+      body: JSON.stringify({ conversationId:"save-"+id, folder:config.historyFolder||"", title, transcript, cast:castMeta(), config:safeConfig() }) })
+      .then(r=>{ if(!r.ok) alert("Saved in your browser, but the server save failed."); })
+      .catch(()=> alert("Saved in your browser, but couldn't reach the server."));
+  }
 };
-function renderSaved(){
-  const m = document.getElementById("savedMenu"); m.innerHTML = "";
-  const saves = loadSaves();
-  if(!saves.length){ m.innerHTML = `<div class="empty">no saved conversations</div>`; return; }
-  saves.forEach(s=>{
+async function renderSaved(){
+  const m = document.getElementById("savedMenu"); m.innerHTML = `<div class="empty">…</div>`;
+  let entries = [];   // { key, title, ts, source }
+  if(LIVE && config.serverHistory){
+    try{
+      const r = await fetch(API + "/history/list?folder=" + encodeURIComponent(config.historyFolder||""));
+      if(r.ok){ const d = await r.json();
+        entries = (d.conversations||[]).filter(c=> String(c.conversationId).startsWith("save-"))
+          .map(c=>({ key:c.conversationId, title:c.title||c.conversationId, ts:c.updatedAt, source:"server" }))
+          .sort((a,b)=> String(b.ts||"").localeCompare(String(a.ts||""))); }
+    }catch(e){}
+  } else {
+    entries = loadSaves().map(s=>({ key:s.id, title:s.title, ts:s.ts, source:"local" }));
+  }
+  m.innerHTML = "";
+  if(!entries.length){ m.innerHTML = `<div class="empty">no saved conversations</div>`; return; }
+  entries.forEach(s=>{
     const row = document.createElement("div"); row.className = "row";
     const open = document.createElement("button");
-    open.textContent = `${s.title}`;
-    open.title = new Date(s.ts).toLocaleString();
-    open.onclick = ()=>{ loadChat(s.id); closeMenus(); };
+    open.textContent = s.title;
+    open.title = (s.ts ? new Date(s.ts).toLocaleString() : "") + (s.source==="server" ? "  · on server" : "");
+    open.onclick = ()=>{ (s.source==="server" ? loadServerSave(s.key) : loadChat(s.key)); closeMenus(); };
     const del = document.createElement("button");
     del.className = "del"; del.textContent = "✕"; del.title = "delete";
-    del.onclick = (e)=>{ e.stopPropagation(); writeSaves(loadSaves().filter(x=>x.id!==s.id)); renderSaved(); };
+    del.onclick = (e)=>{ e.stopPropagation(); deleteSave(s); };
     row.appendChild(open); row.appendChild(del); m.appendChild(row);
   });
 }
+function deleteSave(s){
+  if(s.source==="server"){
+    fetch(API + "/history/delete", { method:"POST", headers:{"content-type":"application/json"},
+      body: JSON.stringify({ conversationId:s.key, folder:config.historyFolder||"" }) }).finally(()=> renderSaved());
+    const num = String(s.key).replace(/^save-/,"");           // drop any local mirror with the same id
+    writeSaves(loadSaves().filter(x=> String(x.id)!==num));
+  } else {
+    writeSaves(loadSaves().filter(x=>x.id!==s.key)); renderSaved();
+  }
+}
+function applyLoadedSave(d){
+  const keepKey = config.openrouterKey;                       // the key is never stored — preserve the current one
+  if(d.config){ config = Object.assign(structuredClone(DEFAULTS), d.config); config.openrouterKey = keepKey || ""; saveConfig(); }
+  savedTitle = d.title || "";
+  conversationId = genConvId(); persistConv();                // a loaded save becomes a fresh live session
+  transcript = Array.isArray(d.transcript) ? d.transcript : [];
+  buildConsole(); renderTranscript(); autosave(); updateSessionField();
+}
+function loadServerSave(key){
+  fetch(API + "/history/load?conversationId=" + encodeURIComponent(key) + "&folder=" + encodeURIComponent(config.historyFolder||""))
+    .then(r=> r.ok ? r.json() : Promise.reject())
+    .then(applyLoadedSave)
+    .catch(()=> alert("Could not load that conversation from the server."));
+}
 function loadChat(id){
   const s = loadSaves().find(x=>x.id===id); if(!s) return;
-  config = structuredClone(s.config); saveConfig();
-  savedTitle = s.title;
-  conversationId = genConvId(); persistConv();   // a loaded chat is a fresh session (backend sessions aren't carried)
-  transcript = structuredClone(s.transcript);
-  buildConsole();
-  renderTranscript();
-  autosave(); updateSessionField();
+  applyLoadedSave(s);
 }
 function renderTranscript(){
   transcript.forEach(e=>{
@@ -616,6 +703,10 @@ function renderSettings(){
   });
   orKey.value = config.openrouterKey || "";
   const hn = document.getElementById("humanNameInput"); if(hn) hn.value = (config.human && config.human.display) || "";
+  const oi = document.getElementById("orientInput"); if(oi) oi.value = (config.orientation != null ? config.orientation : DEFAULT_ORIENTATION);
+  const sp = document.getElementById("skipPerms"); if(sp) sp.checked = !!config.dangerouslySkipPermissions;
+  const sh = document.getElementById("srvHist"); if(sh) sh.checked = !!config.serverHistory;
+  const hf = document.getElementById("histFolder"); if(hf) hf.value = (config.historyFolder != null ? config.historyFolder : "server/history");
   updateSessionField();
   addPart.disabled = config.participants.length >= 4; addPart.style.opacity = addPart.disabled ? .4 : 1;
 }
@@ -627,6 +718,10 @@ function syncFormToConfig(){
     color:r.querySelector(".f-color").value,
   }));
   config.openrouterKey = orKey.value;
+  const _oi = document.getElementById("orientInput"); if(_oi) config.orientation = _oi.value;
+  const _sp = document.getElementById("skipPerms"); config.dangerouslySkipPermissions = !!(_sp && _sp.checked);
+  const _sh = document.getElementById("srvHist"); config.serverHistory = !!(_sh && _sh.checked);
+  const _hf = document.getElementById("histFolder"); if(_hf) config.historyFolder = _hf.value.trim();
   const _hn = document.getElementById("humanNameInput");
   config.human = Object.assign({ display:"human", colour:"bold_white" }, config.human || {});
   config.human.display = (_hn && _hn.value.trim()) || "human";
@@ -658,7 +753,7 @@ backdrop.onclick = e=>{ if(e.target===backdrop){ config = loadConfig(); closeSet
 // config export / import (no key)
 document.getElementById("exportCfg").onclick = ()=>{
   syncFormToConfig();
-  const out = JSON.stringify({ format:"erawan-config", version:1, participants: config.participants }, null, 2);
+  const out = JSON.stringify({ format:"erawan-config", version:1, orientation: config.orientation, participants: config.participants }, null, 2);
   download(`erawan-config-${stamp()}.json`, out, "application/json");
 };
 document.getElementById("importCfg").onclick = ()=> document.getElementById("importCfgFile").click();
@@ -671,6 +766,7 @@ document.getElementById("importCfgFile").onchange = (e)=>{
       const parts = Array.isArray(data) ? data : data.participants;
       if(!Array.isArray(parts) || !parts.length) throw new Error("no participants");
       config.participants = parts.slice(0,4).map(p=>({ display:p.display||"", driver:DRIVERS.includes(p.driver)?p.driver:"opencode", model:p.model||"", folder:p.folder||"", color:p.color||"--gold" }));
+      if(typeof data.orientation === "string") config.orientation = data.orientation;
       renderSettings();
     }catch(err){ alert("Could not import config: " + err.message); }
   };
@@ -679,13 +775,24 @@ document.getElementById("importCfgFile").onchange = (e)=>{
 
 // ---------- go ----------
 buildConsole();
-try {
-  const as = JSON.parse(localStorage.getItem(AUTOSAVE_KEY) || "null");
-  if(as && as.id && as.id === conversationId && Array.isArray(as.transcript) && as.transcript.length){
-    transcript = as.transcript; renderTranscript();
+(async function init(){
+  // probe the backend first so a server-history restore can win over the browser backup
+  try { const r = await fetch(API + "/health"); const d = r.ok && await r.json(); if(d && d.ok){ LIVE = true; setHint(); } } catch(e){}
+  let restored = false;
+  if(LIVE && config.serverHistory && conversationId){
+    try {
+      const r = await fetch(API + "/history/load?conversationId=" + encodeURIComponent(conversationId) + "&folder=" + encodeURIComponent(config.historyFolder||""));
+      if(r.ok){ const d = await r.json(); if(d && Array.isArray(d.transcript) && d.transcript.length){ transcript = d.transcript; renderTranscript(); restored = true; } }
+    } catch(e){}
   }
-} catch(e){}
-updateSessionField();
+  if(!restored){   // fall back to the browser autosave backup
+    try {
+      const as = JSON.parse(localStorage.getItem(AUTOSAVE_KEY) || "null");
+      if(as && as.id && as.id === conversationId && Array.isArray(as.transcript) && as.transcript.length){ transcript = as.transcript; renderTranscript(); }
+    } catch(e){}
+  }
+  updateSessionField();
+})();
 </script>
 </body>
 </html>

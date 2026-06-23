@@ -18,13 +18,14 @@ import readline from "node:readline";
 const KNOCK_TIMEOUT_MS = 180_000;
 
 export class ClaudeCodeDriver {
-  constructor({ folder, model, system = null }) {
+  constructor({ folder, model, system = null, skipPermissions = false }) {
     this.driver = "claude-code";
-    this.folder = folder;        // the participant's self-folder (cwd; its CLAUDE.md auto-loads)
-    this.model = model;          // alias: opus | sonnet | haiku | fable, or a full id
-    this.system = system;        // per-turn situational framing (never written to disk)
-    this.sessionId = null;       // captured on first reply; resumed thereafter
-    this.servingModel = null;    // from .modelUsage — flags a silent reroute
+    this.folder = folder;          // the participant's self-folder (cwd; its CLAUDE.md auto-loads)
+    this.model = model;            // alias: opus | sonnet | haiku | fable, or a full id
+    this.system = system;          // per-turn situational framing (never written to disk)
+    this.skipPermissions = skipPermissions; // opt-in: run with --dangerously-skip-permissions (no prompts, no allowlist)
+    this.sessionId = null;         // captured on first reply; resumed thereafter
+    this.servingModel = null;      // from .modelUsage — flags a silent reroute
   }
 
   start() { /* lazy — the session opens on first send */ }
@@ -34,6 +35,7 @@ export class ClaudeCodeDriver {
   send(text, onDelta = null) {
     return new Promise((resolve, reject) => {
       const args = ["-p", "--model", this.model, "--output-format", "stream-json", "--verbose"];
+      if (this.skipPermissions) args.push("--dangerously-skip-permissions");
       if (this.system) args.push("--append-system-prompt", this.system);
       if (this.sessionId) args.push("--resume", this.sessionId);
       args.push(text);
