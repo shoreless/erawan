@@ -1,0 +1,13 @@
+# live session ids — per-conversation claude session_ids; never commit
+server/state/
+
+# secrets — OpenRouter keys etc. (the console keeps the key in the browser, but just in case)
+*.key
+.env
+.env.*
+auth.json
+
+# misc
+node_modules/
+*.log
+.DS_Store

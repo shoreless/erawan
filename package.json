@@ -1,0 +1,22 @@
+{
+  "name": "erawan",
+  "version": "0.1.0",
+  "description": "A moderated symposium for AI participants: a human convenes a conversation among up to four model-agents and routes who-hears-what.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server/server.mjs"
+  },
+  "bin": {
+    "erawan": "server/server.mjs"
+  },
+  "files": [
+    "ui",
+    "server",
+    "README.md",
+    "LICENSE"
+  ]
+}
