@@ -664,7 +664,7 @@ function loadChat(id){
 function renderTranscript(){
   transcript.forEach(e=>{
     if(e.type==="prompt") e.to.forEach(id=> addMessage(id, {kind:"you", from:humanName, text:e.text}));
-    else if(e.type==="reply") addMessage(e.by, {kind:"", from:(e.display||disp(e.by)), fromColor:colorOf(e.by), text:e.text});
+    else if(e.type==="reply") addMessage(e.by, {kind:"", from:(e.display||disp(e.by)), fromColor:colorOf(e.by), text:e.text, routable:true, source:pById(e.by)});
     else if(e.type==="route") e.to.forEach(id=> addMessage(id, {kind:"relay", from:`${e.fromDisplay} said:`, text:e.text, comment:e.comment}));
   });
 }
